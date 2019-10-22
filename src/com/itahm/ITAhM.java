@@ -220,9 +220,9 @@ public class ITAhM extends HTTPServer {
 							try (PreparedStatement pstmt = c.prepareStatement("SELECT username, level FROM account"+
 								" WHERE username=? AND password=?;")) {
 								pstmt.setString(1, req.getString("username"));
-								pstmt.setString(1, req.getString("password"));
+								pstmt.setString(2, req.getString("password"));
 								
-								try (ResultSet rs = pstmt.executeQuery()) {									
+								try (ResultSet rs = pstmt.executeQuery()) {							
 									if (rs.next()) {
 										JSONObject account = new JSONObject()
 											.put("username", rs.getString(1))
@@ -260,11 +260,12 @@ public class ITAhM extends HTTPServer {
 					}
 					
 					break;
+				default:
+					this.services.forEach(service -> 
+						service.service(req, response)
+					);
 			}
 			
-			this.services.forEach(service -> 
-				service.service(req, response)
-			);
 		}
 		catch (JSONException | UnsupportedEncodingException e) {
 			response.setStatus(Response.Status.BADREQUEST);
