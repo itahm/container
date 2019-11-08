@@ -4,9 +4,9 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import com.itahm.http.HTTPServer;
@@ -17,95 +17,32 @@ import com.itahm.json.JSONObject;
 import com.itahm.lang.KR;
 import com.itahm.service.NMS;
 import com.itahm.service.Serviceable;
-import com.itahm.util.Util;
 
 public class Free extends HTTPServer {
 	
 	private final Path root;
-	public final int limit;
-	public final long expire;
 	private Boolean isClosed = false;
-	private final ArrayList<Serviceable> services = new ArrayList<>();
+	private final Map<String, Serviceable> services = new LinkedHashMap<>();
 	
-	private Free(Builder builder) throws Exception {
-		super(builder.ip, builder.tcp);
+	private Free(String ip, int tcp, Path path) throws Exception {
+		super(ip, tcp);
 		
-		System.out.format("ITAhM HTTP Server started with TCP %d.\n", builder.tcp);
+		System.out.format("HTTP Server started with TCP %d.\n", tcp);
 		
-		root = builder.root.resolve("data");
-		limit = builder.limit;
-		expire = builder.expire;
+		root = path.resolve("data");
 		
 		
 		if (!Files.isDirectory(root)) {
 			Files.createDirectories(root);
 		}
 		
-		services.add(new NMS(root));
+		services.put("NMS", new NMS.Builder(root)
+			//.license()
+			//.expire()
+			.build());
 		
-		services.forEach(service -> service.start());
-	}
-
-	public static class Builder {
-		private String ip = "0.0.0.0";
-		private int tcp = 2014;
-		private Path root = null;
-		private boolean licensed = true;
-		private long expire = 0;
-		private int limit = 0;
-		
-		public Builder() {
-		}
-		
-		public Builder tcp(int i) {
-			tcp = i;
-			
-			return this;
-		}
-		
-		public Builder root(String path) {
-			try {
-				root = Path.of(path);
-			}
-			catch(InvalidPathException ipe) {
-			}
-			
-			return this;
-		}
-		
-		public Builder license(String mac) {
-			if (!Util.isValidAddress(mac)) {
-				System.out.println("Check your License.MAC");
-				
-				licensed = false;
-			}
-			
-			return this;
-		}
-		
-		public Builder expire(long ms) {
-			
-			expire = ms;
-			
-			return this;
-		}
-		
-		public Builder limit(int n) {
-			limit = n;
-			
-			return this;
-		}
-		
-		public Free build() throws Exception {
-			if (!this.licensed) {
-				return null;
-			}
-			
-			if (this.root == null) {
-				this.root = Path.of(ITAhM.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
-			}
-			
-			return new Free(this);
+		for (String name : this.services.keySet()) {
+			this.services.get(name).start();
 		}
 	}
 	
@@ -133,12 +70,8 @@ public class Free extends HTTPServer {
 	
 	@Override
 	public void doPost(Request request, Response response) {
-		String origin = request.getHeader(com.itahm.http.Connection.Header.ORIGIN.toString());
-		
-		if (origin != null) {
-			response.setHeader("Access-Control-Allow-Origin", "http://cems.corebrg.com");
-			response.setHeader("Access-Control-Allow-Credentials", "true");
-		}
+		response.setHeader("Access-Control-Allow-Origin", "http://cems.corebrg.com");
+		response.setHeader("Access-Control-Allow-Credentials", "true");
 
 		try { 
 			JSONObject req = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
@@ -147,16 +80,19 @@ public class Free extends HTTPServer {
 				throw new JSONException(KR.ERROR_CMD_NOT_FOUND);
 			}
 			
-			this.services.forEach(service -> 
-				service.service(req, response)
-			);
-		}
-		catch (JSONException | UnsupportedEncodingException e) {
+			for (String name : this.services.keySet()) {
+				if (services.get(name).service(request, response, req)) {
+					return;
+				}
+			}
+		} catch (JSONException | UnsupportedEncodingException e) {
 			response.setStatus(Response.Status.BADREQUEST);
 			
 			response.write(new JSONObject().
 				put("error", e.getMessage()).toString());
 		}
+		
+		response.setStatus(Response.Status.BADREQUEST);
 	}
 	
 	public void close() {
@@ -168,13 +104,9 @@ public class Free extends HTTPServer {
 			this.isClosed = true;
 		}
 		
-		this.services.forEach(service -> {
-			try {
-				service.stop();
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
-		});
+		for (String name : this.services.keySet()) {
+			this.services.get(name).stop();
+		}
 		
 		try {
 			super.close();
@@ -184,7 +116,8 @@ public class Free extends HTTPServer {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		Builder builder = new Free.Builder();
+		Path root = Path.of(ITAhM.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
+		int tcp = 2014;
 		
 		for (int i=0, _i=args.length; i<_i; i++) {
 			if (args[i].indexOf("-") != 0) {
@@ -193,23 +126,19 @@ public class Free extends HTTPServer {
 			
 			switch(args[i].substring(1).toUpperCase()) {
 			case "ROOT":
-				builder.root(args[++i]);
+				root = Path.of(args[++i]);
 				
 				break;
 			case "TCP":
 				try {
-					builder.tcp = Integer.parseInt(args[++i]);
-				}
-				catch (NumberFormatException nfe) {}
+					tcp = Integer.parseInt(args[++i]);
+				} catch (NumberFormatException nfe) {}
 				
 				break;
 			}
 		}
-				
-		Free itahm = builder
-			//.license("A402B93D8051")
-			//.expire()
-			.build();
+		
+		Free itahm = new Free("0.0.0.0", tcp, root);
 		
 		Runtime.getRuntime().addShutdownHook(
 			new Thread() {

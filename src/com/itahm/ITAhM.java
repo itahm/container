@@ -4,172 +4,54 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
-
-import org.h2.jdbcx.JdbcConnectionPool;
 
 import com.itahm.http.HTTPServer;
 import com.itahm.http.Request;
 import com.itahm.http.Response;
-import com.itahm.http.Session;
 import com.itahm.json.JSONException;
 import com.itahm.json.JSONObject;
 import com.itahm.lang.KR;
 import com.itahm.service.NMS;
 import com.itahm.service.Serviceable;
-import com.itahm.util.Util;
+import com.itahm.service.SignIn;
 
 public class ITAhM extends HTTPServer {
-	private final String MD5_ROOT = "63a9f0ea7bb98050796b649e85481845";
-	private final static int SESS_TIMEOUT = 3600;
-	private final Path root;
-	public final int limit;
-	public final long expire;
-	private final JdbcConnectionPool connPool;
-	private Boolean isClosed = false;
-	private final ArrayList<Serviceable> services = new ArrayList<>();
 	
-	private ITAhM(Builder builder) throws Exception {
-		super(builder.ip, builder.tcp);
+	private final Path root;
+	private Boolean isClosed = false;
+	private final Map<String, Serviceable> services = new LinkedHashMap<>();
+	
+	public ITAhM() throws Exception {
+		this("0.0.0.0", 2014);
+	}
+	
+	public ITAhM(String ip, int tcp) throws Exception {
+		this(ip, tcp, Path.of(ITAhM.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent());
+	}
+
+	public ITAhM(String ip, int tcp, Path path) throws Exception {
+		super(ip, tcp);
 		
-		System.out.format("ITAhM HTTP Server started with TCP %d.\n", builder.tcp);
+		System.out.format("ITAhM HTTP Server started with TCP %d.\n", tcp);
 		
-		root = builder.root.resolve("data");
-		limit = builder.limit;
-		expire = builder.expire;
+		root = path.resolve("data");
 		
 		if (!Files.isDirectory(root)) {
 			Files.createDirectories(root);
 		}
 		
-		connPool = JdbcConnectionPool.create(String.format("jdbc:h2:%s", root.resolve("account").toString()), "sa", "");
+		services.put("SIGNIN", new SignIn(root));
+		services.put("NMS", new NMS.Builder(root)
+			//.license()
+			//.expire()
+			.build());
 		
-		try (Connection c = connPool.getConnection()) {
-			c.setAutoCommit(false);
-		
-			try {
-				/**
-				 * ACCOUNT
-				 */
-				try (Statement stmt = c.createStatement()) {
-					stmt.executeUpdate("CREATE TABLE IF NOT EXISTS account"+
-						" (username VARCHAR NOT NULL"+
-						", password VARCHAR NOT NULL"+
-						", level INT NOT NULL DEFAULT 0"+
-						", PRIMARY KEY(username));");
-				}
-				
-				try (Statement stmt = c.createStatement()) {
-					try (ResultSet rs = stmt.executeQuery("SELECT COUNT(username) FROM account;")) {
-						if (!rs.next() || rs.getLong(1) == 0) {
-							try (PreparedStatement pstmt = c.prepareStatement("INSERT INTO account"+
-								" (username, password, level)"+
-								" VALUES ('root', ?, 0);")) {
-								pstmt.setString(1, MD5_ROOT);
-								
-								pstmt.executeUpdate();
-							}
-						}
-					}
-				}
-				
-				c.commit();
-			} catch (SQLException sqle) {
-				c.rollback();
-				
-				throw sqle;
-			}
-		}
-		
-		services.add(new NMS(root));
-		
-		services.forEach(service -> service.start());
-		
-		if (expire > 0) {
-			new Timer("Expire Timer").schedule(new TimerTask() {
-
-				@Override
-				public void run() {
-					System.out.println(KR.ERROR_LICENSE_EXPIRE);
-					
-					close();
-				}
-				
-			}, new Date(expire));
-		}
-	}
-
-	public static class Builder {
-		private String ip = "0.0.0.0";
-		private int tcp = 2014;
-		private Path root = null;
-		private boolean licensed = true;
-		private long expire = 0;
-		private int limit = 0;
-		
-		public Builder() {
-		}
-		
-		public Builder tcp(int i) {
-			tcp = i;
-			
-			return this;
-		}
-		
-		public Builder root(String path) {
-			try {
-				root = Path.of(path);
-			}
-			catch(InvalidPathException ipe) {
-			}
-			
-			return this;
-		}
-		
-		public Builder license(String mac) {
-			if (!Util.isValidAddress(mac)) {
-				System.out.println("Check your License.MAC");
-				
-				licensed = false;
-			}
-			
-			return this;
-		}
-		
-		public Builder expire(long ms) {
-			
-			expire = ms;
-			
-			return this;
-		}
-		
-		public Builder limit(int n) {
-			limit = n;
-			
-			return this;
-		}
-		
-		public ITAhM build() throws Exception {
-			if (!this.licensed) {
-				return null;
-			}
-			
-			if (this.root == null) {
-				this.root = Path.of(ITAhM.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
-			}
-			
-			return new ITAhM(this);
+		for (String name : this.services.keySet()) {
+			this.services.get(name).start();
 		}
 	}
 	
@@ -204,75 +86,69 @@ public class ITAhM extends HTTPServer {
 			response.setHeader("Access-Control-Allow-Credentials", "true");
 		}
 
-		try { 
-			JSONObject req = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
+		try {
+			JSONObject data = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
 			
-			if (!req.has("command")) {
+			if (!data.has("command")) {
 				throw new JSONException(KR.ERROR_CMD_NOT_FOUND);
 			}
 			
-			Session session = request.getSession(false);
+			Serviceable service;
 			
-			switch (req.getString("command").toUpperCase()) {
-				case "SIGNIN":
-					if (session == null) {
-						try (Connection c = connPool.getConnection()) {
-							try (PreparedStatement pstmt = c.prepareStatement("SELECT username, level FROM account"+
-								" WHERE username=? AND password=?;")) {
-								pstmt.setString(1, req.getString("username"));
-								pstmt.setString(2, req.getString("password"));
-								
-								try (ResultSet rs = pstmt.executeQuery()) {							
-									if (rs.next()) {
-										JSONObject account = new JSONObject()
-											.put("username", rs.getString(1))
-											.put("level", rs.getInt(2));
-										
-										session = request.getSession();
-										
-										session.setAttribute("account", account);
-										
-										session.setMaxInactiveInterval(SESS_TIMEOUT);
-										
-										response.write(account.toString());
-									} else {
-										response.setStatus(Response.Status.UNAUTHORIZED);
-									}
-								}
-							}
-						} catch (SQLException sqle) {
-							sqle.printStackTrace();
-							
-							response.setStatus(Response.Status.SERVERERROR);
-						}
+			switch (data.getString("command").toUpperCase()) {
+			case "SERVICE":
+				JSONObject body = new JSONObject();
+				
+				for (String name : this.services.keySet()) {
+					service = this.services.get(name);
+			
+					if (!name.equals("SIGNIN")) {
+						body.put(name.toLowerCase(), service.isRunning());
 					}
-					else {
-						response.write(((JSONObject)session.getAttribute("account")).toString());
+				}
+				
+				response.write(body.toString());
+				
+				return;
+			case "START":				
+				service = this.services.get(data.getString("service").toUpperCase());
+				
+				if (service == null) {
+					// TODO
+				} else {
+					service.start();
+				}
+				
+				return;
+			case "STOP":
+				service = this.services.get(data.getString("service").toUpperCase());
+				
+				if (service == null) {
+					// TODO
+				} else {
+					service.stop();
+				}
+				
+				return;
+				
+			default:
+				for (String name : this.services.keySet()) {
+					if (this.services.get(name).service(request, response, data)) {
+						return;
 					}
-					
-					break;
-					
-				case "SIGNOUT":
-					if (session == null) {
-						response.setStatus(Response.Status.UNAUTHORIZED);
-					} else {
-						session.invalidate();
-					}
-					
-					break;
-				default:
-					this.services.forEach(service -> 
-						service.service(req, response)
-					);
+				}
+				
+				response.setStatus(Response.Status.UNAVAILABLE);
+				
+				return;
 			}
-			
+		} catch (JSONException | UnsupportedEncodingException e) {
+			response.write(new JSONObject()
+				.put("error", e.getMessage())
+				.toString());
 		}
-		catch (JSONException | UnsupportedEncodingException e) {
-			response.setStatus(Response.Status.BADREQUEST);
-			
-			response.write(new JSONObject().
-				put("error", e.getMessage()).toString());
-		}
+		
+		response.setStatus(Response.Status.BADREQUEST);
 	}
 	
 	public void close() {
@@ -284,13 +160,9 @@ public class ITAhM extends HTTPServer {
 			this.isClosed = true;
 		}
 		
-		this.services.forEach(service -> {
-			try {
-				service.stop();
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
-		});
+		for (String name : this.services.keySet()) {
+			this.services.get(name).stop();
+		}
 		
 		try {
 			super.close();
@@ -300,7 +172,9 @@ public class ITAhM extends HTTPServer {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		Builder builder = new ITAhM.Builder();
+		Path root = null;
+		String ip = "0.0.0.0";
+		int tcp = 2014;
 		
 		for (int i=0, _i=args.length; i<_i; i++) {
 			if (args[i].indexOf("-") != 0) {
@@ -309,23 +183,19 @@ public class ITAhM extends HTTPServer {
 			
 			switch(args[i].substring(1).toUpperCase()) {
 			case "ROOT":
-				builder.root(args[++i]);
+				root = Path.of(args[++i]);
 				
 				break;
 			case "TCP":
 				try {
-					builder.tcp = Integer.parseInt(args[++i]);
-				}
-				catch (NumberFormatException nfe) {}
+					tcp = Integer.parseInt(args[++i]);
+				} catch (NumberFormatException nfe) {}
 				
 				break;
 			}
 		}
-				
-		ITAhM itahm = builder
-			//.license("A402B93D8051")
-			//.expire()
-			.build();
+		
+		ITAhM itahm = root == null? new ITAhM(ip, tcp): new ITAhM(ip, tcp, root);
 		
 		Runtime.getRuntime().addShutdownHook(
 			new Thread() {
