@@ -17,30 +17,39 @@ import com.itahm.json.JSONObject;
 import com.itahm.lang.KR;
 import com.itahm.service.NMS;
 import com.itahm.service.Serviceable;
+import com.itahm.service.SignIn;
 
-public class Free extends HTTPServer {
+public class Demo extends HTTPServer {
 	
 	private final Path root;
 	private Boolean isClosed = false;
 	private final Map<String, Serviceable> services = new LinkedHashMap<>();
 	
-	private Free(String ip, int tcp, Path path) throws Exception {
+	public Demo() throws Exception {
+		this("0.0.0.0", 2014);
+	}
+	
+	public Demo(String ip, int tcp) throws Exception {
+		this(ip, tcp, Path.of(Demo.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent());
+	}
+
+	public Demo(String ip, int tcp, Path path) throws Exception {
 		super(ip, tcp);
 		
-		System.out.format("HTTP Server started with TCP %d.\n", tcp);
+		System.out.format("ITAhM HTTP Server started with TCP %d.\n", tcp);
 		
 		this.root = path;
 		
 		Path root = path.resolve("data");
 		
-		
 		if (!Files.isDirectory(root)) {
 			Files.createDirectories(root);
 		}
 		
+		services.put("SIGNIN", new SignIn(root));
 		services.put("NMS", new NMS.Builder(root)
 			//.license()
-			//.expire()
+			//.expire(1582124400000L)
 			.build());
 		
 		for (String name : this.services.keySet()) {
@@ -72,23 +81,73 @@ public class Free extends HTTPServer {
 	
 	@Override
 	public void doPost(Request request, Response response) {
-		try { 
-			JSONObject req = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
+		String origin = request.getHeader(com.itahm.http.Connection.Header.ORIGIN.toString());
+		
+		if (origin != null) {
+			response.setHeader("Access-Control-Allow-Origin", origin);
+			response.setHeader("Access-Control-Allow-Credentials", "true");
+		}
+
+		try {
+			JSONObject data = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
 			
-			if (!req.has("command")) {
+			if (!data.has("command")) {
 				throw new JSONException(KR.ERROR_CMD_NOT_FOUND);
 			}
 			
-			for (String name : this.services.keySet()) {
-				if (services.get(name).service(request, response, req)) {
-					return;
+			Serviceable service;
+			
+			switch (data.getString("command").toUpperCase()) {
+			case "SERVICE":
+				JSONObject body = new JSONObject();
+				
+				for (String name : this.services.keySet()) {
+					service = this.services.get(name);
+			
+					if (!name.equals("SIGNIN")) {
+						body.put(name.toLowerCase(), service.isRunning());
+					}
 				}
+				
+				response.write(body.toString());
+				
+				return;
+			case "START":				
+				service = this.services.get(data.getString("service").toUpperCase());
+				
+				if (service == null) {
+					// TODO
+				} else {
+					service.start();
+				}
+				
+				return;
+			case "STOP":
+				service = this.services.get(data.getString("service").toUpperCase());
+				
+				if (service == null) {
+					// TODO
+				} else {
+					service.stop();
+				}
+				
+				return;
+				
+			default:
+				for (String name : this.services.keySet()) {
+					if (this.services.get(name).service(request, response, data)) {
+						return;
+					}
+				}
+				
+				response.setStatus(Response.Status.UNAVAILABLE);
+				
+				return;
 			}
 		} catch (JSONException | UnsupportedEncodingException e) {
-			response.setStatus(Response.Status.BADREQUEST);
-			
-			response.write(new JSONObject().
-				put("error", e.getMessage()).toString());
+			response.write(new JSONObject()
+				.put("error", e.getMessage())
+				.toString());
 		}
 		
 		response.setStatus(Response.Status.BADREQUEST);
@@ -115,7 +174,8 @@ public class Free extends HTTPServer {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		Path root = Path.of(ITAhM.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
+		Path root = null;
+		String ip = "0.0.0.0";
 		int tcp = 2014;
 		
 		for (int i=0, _i=args.length; i<_i; i++) {
@@ -137,7 +197,7 @@ public class Free extends HTTPServer {
 			}
 		}
 		
-		Free itahm = new Free("0.0.0.0", tcp, root);
+		Demo itahm = root == null? new Demo(ip, tcp): new Demo(ip, tcp, root);
 		
 		Runtime.getRuntime().addShutdownHook(
 			new Thread() {

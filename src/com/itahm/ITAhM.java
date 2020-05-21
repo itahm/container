@@ -38,7 +38,9 @@ public class ITAhM extends HTTPServer {
 		
 		System.out.format("ITAhM HTTP Server started with TCP %d.\n", tcp);
 		
-		root = path.resolve("data");
+		this.root = path;
+		
+		Path root = path.resolve("data");
 		
 		if (!Files.isDirectory(root)) {
 			Files.createDirectories(root);
@@ -47,7 +49,7 @@ public class ITAhM extends HTTPServer {
 		services.put("SIGNIN", new SignIn(root));
 		services.put("NMS", new NMS.Builder(root)
 			//.license()
-			//.expire()
+			//.expire(1582124400000L)
 			.build());
 		
 		for (String name : this.services.keySet()) {
@@ -79,13 +81,6 @@ public class ITAhM extends HTTPServer {
 	
 	@Override
 	public void doPost(Request request, Response response) {
-		String origin = request.getHeader(com.itahm.http.Connection.Header.ORIGIN.toString());
-		
-		if (origin != null) {
-			response.setHeader("Access-Control-Allow-Origin", origin);
-			response.setHeader("Access-Control-Allow-Credentials", "true");
-		}
-
 		try {
 			JSONObject data = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
 			
