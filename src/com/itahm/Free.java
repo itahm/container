@@ -45,7 +45,7 @@ public class Free extends HTTPServer {
 			Files.createDirectories(root);
 		}
 		
-		services.put("NMS", new NMS.Builder(root).build());
+		services.put("NMS", new NMS(root));
 		
 		for (String name : this.services.keySet()) {
 			this.services.get(name).start();
@@ -185,7 +185,7 @@ public class Free extends HTTPServer {
 			}
 		}
 		
-		ITAhM itahm = root == null? new ITAhM(ip, tcp): new ITAhM(ip, tcp, root);
+		Free itahm = root == null? new Free(ip, tcp): new Free(ip, tcp, root);
 		
 		Runtime.getRuntime().addShutdownHook(
 			new Thread() {

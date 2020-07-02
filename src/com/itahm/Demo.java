@@ -47,10 +47,7 @@ public class Demo extends HTTPServer {
 		}
 		
 		services.put("SIGNIN", new SignIn(root));
-		services.put("NMS", new NMS.Builder(root)
-			//.license()
-			//.expire(1582124400000L)
-			.build());
+		services.put("NMS", new NMS(root));
 		
 		for (String name : this.services.keySet()) {
 			this.services.get(name).start();

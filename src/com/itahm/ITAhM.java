@@ -18,8 +18,11 @@ import com.itahm.lang.KR;
 import com.itahm.service.NMS;
 import com.itahm.service.Serviceable;
 import com.itahm.service.SignIn;
+import com.itahm.util.Util;
 
 public class ITAhM extends HTTPServer {
+	
+	public static String LICENSE = null;
 	
 	private final Path root;
 	private Boolean isClosed = false;
@@ -36,6 +39,10 @@ public class ITAhM extends HTTPServer {
 	public ITAhM(String ip, int tcp, Path path) throws Exception {
 		super(ip, tcp);
 		
+		if (LICENSE != null && !Util.isValidAddress(LICENSE)) {
+			throw new Exception(KR.ERROR_LICENSE_MAC);
+		}
+		
 		System.out.format("ITAhM HTTP Server started with TCP %d.\n", tcp);
 		
 		this.root = path;
@@ -47,10 +54,7 @@ public class ITAhM extends HTTPServer {
 		}
 		
 		services.put("SIGNIN", new SignIn(root));
-		services.put("NMS", new NMS.Builder(root)
-			//.license()
-			//.expire(1582124400000L)
-			.build());
+		services.put("NMS", new NMS(root));
 		
 		for (String name : this.services.keySet()) {
 			this.services.get(name).start();
@@ -81,6 +85,12 @@ public class ITAhM extends HTTPServer {
 	
 	@Override
 	public void doPost(Request request, Response response) {
+		if (NMS.EXPIRE > 0 && System.currentTimeMillis() > NMS.EXPIRE) {
+			response.setStatus(Response.Status.UNAVAILABLE);
+			
+			return;
+		}
+		
 		try {
 			JSONObject data = new JSONObject(new String(request.read(), StandardCharsets.UTF_8.name()));
 			
@@ -133,7 +143,7 @@ public class ITAhM extends HTTPServer {
 					}
 				}
 				
-				response.setStatus(Response.Status.UNAVAILABLE);
+				response.setStatus(Response.Status.NOTFOUND);
 				
 				return;
 			}
