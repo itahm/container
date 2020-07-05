@@ -5,9 +5,6 @@ import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.regex.Pattern;
 
 import com.itahm.http.HTTPServer;
 import com.itahm.http.Request;
@@ -16,13 +13,11 @@ import com.itahm.json.JSONException;
 import com.itahm.json.JSONObject;
 import com.itahm.lang.KR;
 import com.itahm.service.NMS;
-import com.itahm.service.Serviceable;
 
 public class Free extends HTTPServer {
 	
-	private final Path root;
+	private final NMS nms;
 	private Boolean isClosed = false;
-	private final Map<String, Serviceable> services = new LinkedHashMap<>();
 	
 	public Free() throws Exception {
 		this("0.0.0.0", 2014);
@@ -37,41 +32,20 @@ public class Free extends HTTPServer {
 		
 		System.out.format("ITAhM HTTP Server started with TCP %d.\n", tcp);
 		
-		this.root = path;
-		
 		Path root = path.resolve("data");
 		
 		if (!Files.isDirectory(root)) {
 			Files.createDirectories(root);
 		}
 		
-		services.put("NMS", new NMS(root));
+		nms = new NMS(root);
 		
-		for (String name : this.services.keySet()) {
-			this.services.get(name).start();
-		}
+		nms.start();
 	}
 	
 	@Override
 	public void doGet(Request request, Response response) {
-		String uri = request.getRequestURI();
-		
-		if ("/".equals(uri)) {
-			uri = "/index.html";
-		}
-		
-		Path path = this.root.resolve(uri.substring(1));
-		
-		if (!Pattern.compile("^/data/.*").matcher(uri).matches() && Files.isRegularFile(path)) {
-			try {
-				response.write(path);
-			} catch (IOException e) {
-				response.setStatus(Response.Status.SERVERERROR);
-			}
-		}
-		else {
-			response.setStatus(Response.Status.NOTFOUND);
-		}
+		response.setStatus(Response.Status.NOTFOUND);
 	}
 	
 	@Override
@@ -83,55 +57,12 @@ public class Free extends HTTPServer {
 				throw new JSONException(KR.ERROR_CMD_NOT_FOUND);
 			}
 			
-			Serviceable service;
-			
-			switch (data.getString("command").toUpperCase()) {
-			case "SERVICE":
-				JSONObject body = new JSONObject();
-				
-				for (String name : this.services.keySet()) {
-					service = this.services.get(name);
-			
-					if (!name.equals("SIGNIN")) {
-						body.put(name.toLowerCase(), service.isRunning());
-					}
-				}
-				
-				response.write(body.toString());
-				
+			if (this.nms.service(request, response, data)) {
 				return;
-			case "START":				
-				service = this.services.get(data.getString("service").toUpperCase());
-				
-				if (service == null) {
-					// TODO
-				} else {
-					service.start();
-				}
-				
-				return;
-			case "STOP":
-				service = this.services.get(data.getString("service").toUpperCase());
-				
-				if (service == null) {
-					// TODO
-				} else {
-					service.stop();
-				}
-				
-				return;
-				
-			default:
-				for (String name : this.services.keySet()) {
-					if (this.services.get(name).service(request, response, data)) {
-						return;
-					}
-				}
-				
+			} else {
 				response.setStatus(Response.Status.UNAVAILABLE);
-				
-				return;
 			}
+			
 		} catch (JSONException | UnsupportedEncodingException e) {
 			response.write(new JSONObject()
 				.put("error", e.getMessage())
@@ -150,9 +81,8 @@ public class Free extends HTTPServer {
 			this.isClosed = true;
 		}
 		
-		for (String name : this.services.keySet()) {
-			this.services.get(name).stop();
-		}
+		
+		this.nms.stop();
 		
 		try {
 			super.close();
@@ -161,31 +91,8 @@ public class Free extends HTTPServer {
 		}
 	}
 	
-	public static void main(String[] args) throws Exception {
-		Path root = null;
-		String ip = "0.0.0.0";
-		int tcp = 2014;
-		
-		for (int i=0, _i=args.length; i<_i; i++) {
-			if (args[i].indexOf("-") != 0) {
-				continue;
-			}
-			
-			switch(args[i].substring(1).toUpperCase()) {
-			case "ROOT":
-				root = Path.of(args[++i]);
-				
-				break;
-			case "TCP":
-				try {
-					tcp = Integer.parseInt(args[++i]);
-				} catch (NumberFormatException nfe) {}
-				
-				break;
-			}
-		}
-		
-		Free itahm = root == null? new Free(ip, tcp): new Free(ip, tcp, root);
+	public static void main(String[] args) throws Exception {		
+		Free itahm = new Free();
 		
 		Runtime.getRuntime().addShutdownHook(
 			new Thread() {
